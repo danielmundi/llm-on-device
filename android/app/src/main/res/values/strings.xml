@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Text Classification</string>
+    <string name="text_field_place_holder">Enter the text to complete</string>
+    <string name="generate">Generate</string>
+    <string name="train">Train</string>
+    <string name="inference_title">Inference Time</string>
+    <string name="inference_value">%d ms</string>
+    <string name="training_title">Training Time</string>
+    <string name="training_value">%d ms</string>
+    <string name="training_loss">Loss: %.2f</string>
+    <string name="save_w">Save Weights</string>
+    <string name="memory">Peak Memory %d MB / %dGb</string>
+    <string name="tokens_per_second">%.2f t/s</string>
+</resources>
