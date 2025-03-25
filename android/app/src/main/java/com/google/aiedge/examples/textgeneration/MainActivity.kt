@@ -21,8 +21,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,7 +36,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -134,6 +135,7 @@ fun TextGenerationScreen(
                     }
                 },
                 onSubmittedSaveW = { viewModel.runSaveW() },
+                onSubmittedRestore = { viewModel.runRestore(it) },
                 memoryUsage = uiState.memoryUsage,
                 tokensPerSecond = uiState.modelInfo.tokensPerSecond,
                 topWords = uiState.modelInfo.topWords,
@@ -152,7 +154,7 @@ fun TextGenerationScreen(
 fun Header() {
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.Companion.White
+            containerColor = Color.White
         ),
         title = {
             Image(
@@ -211,6 +213,7 @@ fun GenerationBody(
     onTextChange: (String) -> Unit,
     onSubmittedTrain: (String) -> Unit,
     onSubmittedSaveW: () -> Unit,
+    onSubmittedRestore: (String) -> Unit,
     memoryUsage: Pair<Long, Long>,
     tokensPerSecond: Float,
     topWords: List<String>,
@@ -218,11 +221,13 @@ fun GenerationBody(
 ) {
     val focusManager = LocalFocusManager.current
 
-    Column(modifier = modifier.padding(horizontal = 20.dp)) {
+    Column(
+        modifier = modifier.padding(horizontal = 20.dp),
+    ) {
         Spacer(modifier = Modifier.height(20.dp))
         TopKSelector(words = topWords, onWordSelected = {
                  onWordSelected("${textTyped}${it}")
-        })
+        },)
         TextField(
             modifier = Modifier
                 .fillMaxWidth()
@@ -235,7 +240,9 @@ fun GenerationBody(
 
         )
         Spacer(modifier = Modifier.height(10.dp))
-
+        RestoreWeightsSelector(
+            onRestoreWeights = onSubmittedRestore
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -262,6 +269,14 @@ fun GenerationBody(
                     onSubmittedSaveW()
                 }) {
                 Text(text = stringResource(id = R.string.save_w))
+            }
+            Spacer(modifier = Modifier.width(20.dp))
+            Button(
+                onClick = {
+                    focusManager.clearFocus()
+                    onSubmittedRestore("default_lora_weights")
+                }) {
+                Text( text = stringResource(id = R.string.restore))
             }
         }
         Spacer(modifier = Modifier.height(20.dp))
@@ -340,6 +355,45 @@ fun TopKSelector(
                     }
                     .padding(8.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun RestoreWeightsSelector(
+    onRestoreWeights: (filePath: String) -> Unit
+) {
+    val options = listOf(
+        "Fine Tuned 1" to "finetuned1",
+        "Fine Tuned 2" to "finetuned2",
+        "Fine Tuned 3" to "finetuned3"
+    )
+    var selectedOption by remember { mutableStateOf(options.first().first) }
+
+    Column {
+        options.forEach { (label, filePath) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (selectedOption != label) {
+                            selectedOption = label
+                            onRestoreWeights(filePath)
+                        }
+                    }
+                    .padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = (selectedOption == label),
+                    onClick = null
+                )
+                Text(
+                    text = label,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+            }
         }
     }
 }

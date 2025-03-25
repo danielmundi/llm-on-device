@@ -18,28 +18,25 @@ package com.google.aiedge.examples.textgeneration
 import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
+import android.os.SystemClock.sleep
 import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
 import java.io.File
 import java.nio.FloatBuffer
-import android.os.Debug
-import android.os.SystemClock.sleep
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import androidx.core.content.ContextCompat.getSystemService
-import kotlinx.coroutines.flow.update
-import java.nio.IntBuffer
 import kotlin.concurrent.thread
 import kotlin.math.max
+
 
 class TextGenerationHelper(private val context: Context) {
 
@@ -51,7 +48,7 @@ class TextGenerationHelper(private val context: Context) {
         val bpeRanks = loadBpeRanks(context)
         tokenizer = GPT2Tokenizer(encoder, decoder, bpeRanks)
 
-        initClassifier(Model.LocalModel)
+        initClassifier(Model.FullModel)
     }
 
     // ----------------- Model Metrics ---------------------------
@@ -74,7 +71,7 @@ class TextGenerationHelper(private val context: Context) {
 
     var completableDeferred: CompletableDeferred<Unit>? = null
 
-    fun initClassifier(model: Model = Model.LocalModel) {
+    fun initClassifier(model: Model = Model.FullModel) {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(info)
@@ -84,10 +81,15 @@ class TextGenerationHelper(private val context: Context) {
             val tfliteBuffer = FileUtil.loadMappedFile(context, model.fileName)
             _initMem = tfliteBuffer.capacity().toLong()
             Log.i(TAG, "LiteRT buffer criado a partir de ${model.fileName}")
+            // Leitura do modelo .tflite
             Interpreter(tfliteBuffer, Interpreter.Options())
+
         } catch (e: Exception) {
             Log.e(TAG, "Falha ao criar LiteRT a partir de ${model.fileName}: ${e.message}", e)
             null
+        }
+        if (model.fileName == "lora_model.tflite") {
+            save("default_lora_weights")
         }
     }
 
@@ -102,7 +104,7 @@ class TextGenerationHelper(private val context: Context) {
                 "inputs" to arrayOf(listOf(0).toIntArray())
             )
         }
-        val tokens =  localTokenizer.encode(inputText).toIntArray() 
+        val tokens =  localTokenizer.encode(inputText).toIntArray()
         val attentionMaskArray = arrayOf(IntArray(tokens.size) { 1 })
 
         return mapOf(
@@ -156,45 +158,70 @@ class TextGenerationHelper(private val context: Context) {
         }
     }
 
+    /**
+     * Realiza a inferência do modelo com base no texto de entrada fornecido e retorna o token mais provável.
+     *
+     * @param inputText Texto de entrada que será analisado pelo modelo.
+     * @return O token mais provável após a inferência do modelo.
+     */
     private fun _infer(inputText: String): String {
         val localInterpreter = interpreter ?: run {
             Log.e(TAG, "Interpreter não inicializado.")
             return "[ERRO]"
         }
+
+        // Prepara o mapa de entradas tokenizadas para o modelo.
         val inputsMap = getTokenizeInput(inputText)
+
+        // Obtém a forma (shape) da saída do tensor (output) do modelo para o índice 0.
         val outputShape = localInterpreter.getOutputTensor(0).shape()
-        val outBuffer: FloatBuffer = FloatBuffer.allocate(outputShape[1]+(201028-9220))
+
+        // Cria um buffer para armazenar os resultados da saída, com base na forma da saída.
+        val outBuffer: FloatBuffer = FloatBuffer.allocate(outputShape[1] + (201028 - 9220))
+
+        // Cria um mapa de saídas, associando a chave "logits" ao buffer de saída.
         val outputsMap = mapOf("logits" to outBuffer)
 
-
         val startTime = SystemClock.uptimeMillis()
+
+        // Executa a inferência no modelo, passando as entradas e as saídas.
+        // O método runSignature é usado para executar a inferência com a assinatura especificada.
         localInterpreter.runSignature(inputsMap, outputsMap, "infer")
+
         val inferenceTime = SystemClock.uptimeMillis() - startTime
 
+        // Rewind do buffer de saída para garantir que ele está pronto para leitura.
         outBuffer.rewind()
+
+        // Cria um array para armazenar os valores dos logits (saídas do modelo).
         val logitsArray = FloatArray(outBuffer.capacity())
+
+        // Preenche o array de logits a partir do buffer.
         outBuffer.get(logitsArray)
 
+        // Define k como o número de tokens mais prováveis que queremos retornar.
         val k = 5
+
+        // Obtém os k tokens mais prováveis (top-k) a partir do array de logits.
         val topKList = topK(logitsArray, k)
 
-        _tokensPerSecond = 5/(inferenceTime.toFloat()/1000)
+        // Calcula a taxa de tokens por segundo com base no tempo de inferência.
+        _tokensPerSecond = 5 / (inferenceTime.toFloat() / 1000)
 
+        // Decodifica os tokens mais prováveis e os mapeia para uma lista de pares (token, probabilidade).
         val topKDecoded = topKList.map { (idx, prob) ->
-            val tokenStr = tokenizer!!.decode(listOf(idx)) ?: "[UNK]"
+            val tokenStr = tokenizer!!.decode(listOf(idx)) ?: "[UNK]" // Decodifica o token usando o tokenizer, ou retorna "[UNK]" caso o token não seja encontrado.
             tokenStr to prob
         }
+
         updateModelMetric("tokensPerSecond", _tokensPerSecond)
         updateModelMetric("inferenceTime", inferenceTime)
 
-        topKDecoded.forEachIndexed { rank, (tokenStr, p) ->
-            Log.i(TAG, "   #${rank+1}: '$tokenStr' (prob=%.4f)".format(p))
-        }
+        val topWords = topKDecoded.map { it.first }
 
-        val topWords = topKDecoded.map {it.first}
         updateModelMetric("topWords", topWords)
 
-        val bestToken = topKDecoded.firstOrNull()?.first ?: "[UNK]"
+        val bestToken = topKDecoded.firstOrNull()?.first ?: "[UNK]" // Se não houver nenhum token, retorna "[UNK]".
         return bestToken
     }
 
@@ -266,44 +293,75 @@ class TextGenerationHelper(private val context: Context) {
         return Triple(samples.toTypedArray(), mask.toTypedArray(), nextWords.toTypedArray())
     }
 
+    /**
+     * Realiza o treinamento do modelo utilizando o texto de entrada fornecido.
+     * Durante o treinamento, o modelo é alimentado com entradas e etiquetas e o erro (loss) é computado a cada época.
+     *
+     * @param inputText Texto de entrada que será utilizado no treinamento.
+     */
     private fun _train(inputText: String) {
         val localInterpreter = interpreter ?: run {
             Log.e(TAG, "Interpreter não inicializado.")
             return
         }
 
+        // Gera dados simulados (mock) a partir do texto de entrada.
+        // 'inputs', 'mask' e 'labels' são extraídos do mock.
         val (inputs, mask, labels) = mock(inputText)
+
+        // Obtém a forma (shape) da saída do tensor (output) do modelo para o índice 0.
         val outputShape = localInterpreter.getOutputTensor(0).shape()
-        val outputBuffer: FloatBuffer = FloatBuffer.allocate(outputShape[1]*inputs.size)
+
+        // Cria um buffer para armazenar os valores de perda (loss) durante o treinamento.
+        val outputBuffer: FloatBuffer = FloatBuffer.allocate(outputShape[1] * inputs.size)
+
+        // Cria um mapa de saídas e associa a chave "loss" ao buffer de saída.
         val outputs = mutableMapOf<String, Any>()
         outputs["loss"] = outputBuffer
+
+        // Lista para armazenar as perdas (losses) durante o treinamento.
         val losses = mutableListOf<Float>()
 
+        // Marca o início do tempo para medir a duração total do treinamento.
         val startTime = SystemClock.uptimeMillis()
+
+        // Executa o treinamento por 10 épocas
         for (epoch in 0..10) {
+            // Cria o mapa de entradas a ser alimentado ao modelo.
             val inputsMap = mapOf(
-                "input_ids" to inputs,
-                "attention_mask" to mask,
-                "labels" to labels
+                "input_ids" to inputs, // Identificadores de entrada (tokens)
+                "attention_mask" to mask, // Máscara de atenção para indicar quais tokens são relevantes
+                "labels" to labels // targets
             )
+
             localInterpreter.runSignature(inputsMap, outputs, "train")
+
+            // Rewind do buffer de saída para garantir que ele está pronto para leitura.
             outputBuffer.rewind()
+
+            // Obtém o valor da perda (loss) calculada pelo modelo para esta época.
             val current_loss = outputBuffer.get()
             losses.add(current_loss)
+
+            // Rewind novamente o buffer para leitura.
             outputBuffer.rewind()
             updateModelMetric("loss", current_loss)
+            // Faz uma pausa de 2 segundos entre as épocas para previnir sobrecarga no dispositivo
             sleep(2000)
         }
 
         val trainingTime = SystemClock.uptimeMillis() - startTime
+
+        // Obtém a última perda registrada após a última época de treinamento.
         val outputLoss: Float = outputBuffer.get()
 
-        Log.i(TAG, "Treinamento finalizado em ${trainingTime}ms")
-
+        // Rewind do buffer de saída antes de atualizar as métricas.
         outputBuffer.rewind()
+
         updateModelMetric("loss", outputLoss)
         updateModelMetric("tokensPerSecond", _tokensPerSecond)
         updateModelMetric("trainingTime", trainingTime)
+
         return
     }
 
@@ -339,12 +397,61 @@ class TextGenerationHelper(private val context: Context) {
         }
         return bpeRanks
     }
+
+    fun save(fileName: String) {
+        _save(context, fileName)
+    }
+
+    private fun _save(context: Context, fileName: String): String   {
+        val localInterpreter = interpreter ?: run {
+            Log.e(TAG, "Interpreter não inicializado.")
+            return "[ERRO]"
+        }
+        val outputFile = File(context.filesDir, fileName)
+
+        val inputs: MutableMap<String, Any> = HashMap()
+        inputs["checkpoint_path"] = outputFile.absolutePath
+        val outputs: Map<String, Any> = HashMap()
+        localInterpreter.runSignature(inputs, outputs, "save")
+        if (outputFile.exists() && outputFile.length() > 0) {
+            Log.d(TAG, "Modelo salvo com sucesso em: ${outputFile.absolutePath}")
+            "Saved"
+        } else {
+            Log.e(TAG, "Falha ao salvar o modelo. O arquivo está vazio ou não foi criado.")
+            "[ERRO] Arquivo não salvo corretamente."
+        }
+        return "Saved"
+    }
+
+    fun restore(fileName: String) {
+        _restore(context, fileName)
+    }
+
+    private fun _restore(context: Context, fileName: String): String {
+        val localInterpreter = interpreter ?: run {
+            Log.e(TAG, "Interpreter não inicializado.")
+            return "[ERRO]"
+        }
+        val outputFile = File(context.filesDir, fileName)
+        if (outputFile.exists() && outputFile.length() > 0) {
+            val inputs: MutableMap<String, Any> = HashMap()
+            inputs["checkpoint_path"] = outputFile.absolutePath
+            val outputs: Map<String, Any> = HashMap()
+
+            localInterpreter.runSignature(inputs, outputs, "restore")
+            Log.d(TAG, "Modelo restaurado com sucesso em: ${outputFile.absolutePath}")
+            return "Restore"
+        }
+        Log.e(TAG, "Falha ao salvar o modelo. O arquivo está vazio ou não foi criado.")
+        return "Not Restore"
+    }
+
     companion object {
         private const val TAG = "TextClassifier"
     }
 
     enum class Model(val fileName: String) {
-        LocalModel("model.tflite"),
+        FullModel("model.tflite"),
         LoraModel("lora_model.tflite"),
     }
 }

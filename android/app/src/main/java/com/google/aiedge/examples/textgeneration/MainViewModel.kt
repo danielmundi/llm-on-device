@@ -52,6 +52,7 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
     private var trainingJob: Job? = null
     private var saveWeight: Job? = null
     private var typingJob: Job? = null
+    private var restoreJob: Job? = null
 
     private val modelInfo = textGenerationHelper.modelInfo.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), ModelInfo()
@@ -94,9 +95,17 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
     fun runSaveW() {
         saveWeight?.cancel()
         saveWeight = viewModelScope.launch {
-            //textGenerationHelper.saveModel("trained_model")
+            textGenerationHelper.save("trained_model")
         }
     }
+
+    fun runRestore(fileName: String) {
+        restoreJob?.cancel()
+        restoreJob = viewModelScope.launch {
+            textGenerationHelper.restore(fileName)
+        }
+    }
+
     fun runTraining(inputText: String) {
         trainingJob?.cancel()
         trainingJob = viewModelScope.launch {
