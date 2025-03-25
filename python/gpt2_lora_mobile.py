@@ -16,6 +16,7 @@ def get_argsparse():
         - quantization (bool): Se True, aplica a quantização do modelo para reduzir seu tamanho e melhorar a eficiência em dispositivos móveis.
         - filename (str): Nome base do arquivo de saída.
         - export_dir (str): Diretório para exportação do modelo salvo.
+        - save_tokenizer (bool) Se True salva o tokenizer
     """
     argparser = argparse.ArgumentParser("Configuration")
     argparser.add_argument("--quantization", '-q', action='store_true')
@@ -25,8 +26,12 @@ def get_argsparse():
     argparser.add_argument("--export_dir", "-ed", default="saved_model", type=str, help="Export directory to save model info")
     argparser.add_argument("--filename", '-f', default='model.tflite', type=str, help="File name to save model")
     argparser.add_argument("--apply_lora", '-lora', action="store_true")
+    argparser.add_argument("--save_tokenizer", '-st', action = "store_true")
 
     return argparser.parse_args()
+
+args = get_argsparse()
+
 class LoraAttn(tf.keras.layers.Layer):
     """
         Classe que implementa a técnica de LoRA (Low-Rank Adaptation) para camadas de atenção no TensorFlow.
@@ -156,7 +161,10 @@ class GPT2Generator(tf.Module):
         # Recompila o modelo para registrar as camadas LoRA no gráfico computacional
         optimizer = self.model.optimizer if self.model.optimizer else tf.keras.optimizers.Adam()
         self.model.compile(optimizer=optimizer)
-    
+
+    ## algumas funções podem ser importantes durante o processo de geração, como nem todas as operações são compativeis durante a conversão, o decorator abaixo ajuda a identificar esse problemas de incompatibilidade e ira mostrar um warning ou compatibility error
+    ## Para mais informações consulte https://ai.google.dev/edge/litert/models/authoring
+    @tf.lite.experimental.authoring.compatible
     @tf.function(
         input_signature=[
             tf.TensorSpec([None, None], tf.int32),
@@ -180,6 +188,7 @@ class GPT2Generator(tf.Module):
             "logits": tokens
         }
 
+    @tf.lite.experimental.authoring.compatible
     @tf.function(
         input_signature=[
             tf.TensorSpec([None, None], tf.int32),
@@ -211,7 +220,8 @@ class GPT2Generator(tf.Module):
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
         return {"loss": loss}
-
+    
+    @tf.lite.experimental.authoring.compatible
     @tf.function
     def get_w(self):
         weights = {}
@@ -219,8 +229,38 @@ class GPT2Generator(tf.Module):
             weights[var.name] = var
         return weights
 
+    @tf.lite.experimental.authoring.compatible
+    @tf.function(input_signature=[tf.TensorSpec(shape=[], dtype=tf.string)])
+    def save(self, checkpoint_path):
+        tensor_names = [weight.name for weight in self.model.weights if 'lora' in weight.name]
+        tensors_to_save = [weight.read_value() for weight in self.model.weights if 'lora' in weight.name]
+        tf.raw_ops.Save(
+            filename=checkpoint_path,
+            tensor_names=tensor_names,
+            data=tensors_to_save,
+            name='save'
+        )
+        return {
+            "checkpoint_path": checkpoint_path
+        }
+ 
+    @tf.lite.experimental.authoring.compatible
+    @tf.function(input_signature=[tf.TensorSpec(shape=[], dtype=tf.string)])
+    def restore(self, checkpoint_path):
+        restored_tensors = {}
+        for var in self.model.weights:
+            if 'lora' in var.name:
+                restored = tf.raw_ops.Restore(
+                    file_pattern=checkpoint_path,
+                    tensor_name=var.name,
+                    dt=var.dtype,
+                    name='restore'
+                )
+                var.assign(restored)
+                restored_tensors[var.name] = restored
+        return {"resposta": "restored"}
     
-def export_saved_model(args):
+def export_saved_model():
     """
         Função para exportar um modelo treinado (ou adaptado) para o formato TFLite, com suporte a LoRA e quantização opcional.
 
@@ -237,10 +277,13 @@ def export_saved_model(args):
     model = GPT2Generator(model_name=args.model_name, lr=args.learning_rate, apply_lora=args.apply_lora)
     # Define as assinaturas das funções de treinamento, inferência e obtenção de pesos
     signatures = {
-        "train":  model.train.get_concrete_function(),
-        "infer":  model.infer.get_concrete_function(),
-        "get_weights": model.get_w.get_concrete_function(),
+            "train":  model.train.get_concrete_function(),
+            "infer":  model.infer.get_concrete_function(),
+            "get_weights": model.get_w.get_concrete_function(),
     }
+    if args.apply_lora:
+        signatures['save'] = model.save.get_concrete_function()
+        signatures['restore'] = model.restore.get_concrete_function()
     # Salva o modelo no formato SavedModel com as assinaturas
     tf.saved_model.save(
         obj=model,
@@ -249,8 +292,9 @@ def export_saved_model(args):
     )
     # Salva o tokenizer associado ao modelo GPT-2
     # Isso vai ser importante quando formos passar o modelo para o dispositivo, uma vez que replicamos o tokenizer no kotlin
-    tokenizer = GPT2Tokenizer.from_pretrained(args.model_name)
-    tokenizer.save_pretrained(f"tokenizer_{args.filename}")
+    if args.save_tokenizer:
+        tokenizer = GPT2Tokenizer.from_pretrained(args.model_name)
+        tokenizer.save_pretrained(f"tokenizer_{args.filename}")
 
     converter = tf.lite.TFLiteConverter.from_saved_model(args.export_dir)
 
@@ -258,7 +302,8 @@ def export_saved_model(args):
         tf.lite.OpsSet.TFLITE_BUILTINS,
         tf.lite.OpsSet.SELECT_TF_OPS
     ]
-    converter.experimental_enable_resource_variables = True
+    # Habilita resource variables que adiciona garantias de leitura e gravação mais fortes
+    #converter.experimental_enable_resource_variables = True
     if args.quantization:
         converter.optimizations = [tf.lite.Optimize.DEFAULT] ## Aparetemente operadores com input e output do tipo flooat, não são suportados por INT8, causando erro.
         converter.target_spec.supported_types = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
@@ -275,5 +320,4 @@ def export_saved_model(args):
 
 
 if __name__ == "__main__":
-    args = get_argsparse()
-    export_saved_model(args)
+    export_saved_model()
