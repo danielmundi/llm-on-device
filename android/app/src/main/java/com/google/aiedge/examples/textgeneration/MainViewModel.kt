@@ -17,6 +17,7 @@
 package com.google.aiedge.examples.textgeneration
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -48,11 +49,14 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
         }
     }
 
+    private val TAG = "TextClassifier"
+
     private var generateJob: Job? = null
     private var trainingJob: Job? = null
     private var saveWeight: Job? = null
     private var typingJob: Job? = null
     private var restoreJob: Job? = null
+    private var weightChangeJob: Job? = null
 
     private val modelInfo = textGenerationHelper.modelInfo.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), ModelInfo()
@@ -72,15 +76,20 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
         }
     }
 
+    private val weightSelected = textGenerationHelper.weightSelected.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5_000), "finetuned1"
+    )
+
     val uiState: StateFlow<UiState> = combine(
-        errorMessage, modelInfo, textTyped, memoryUsage
-    ) { throwable, modelInfo, textTyped, memoryUsage ->
+        errorMessage, modelInfo, textTyped, memoryUsage, weightSelected
+    ) { throwable, modelInfo, textTyped, memoryUsage, weightSelected ->
         textGenerationHelper.completableDeferred?.complete(Unit)
         UiState(
             errorMessage = throwable?.message,
             modelInfo = modelInfo,
             textTyped = textTyped,
             memoryUsage = memoryUsage,
+            weightSelected = weightSelected,
         )
     }.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState()
@@ -92,10 +101,10 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
             textGenerationHelper.infer(inputText)
         }
     }
-    fun runSaveW() {
+    fun runSaveW(weightSelected: String) {
         saveWeight?.cancel()
         saveWeight = viewModelScope.launch {
-            textGenerationHelper.save("trained_model")
+            textGenerationHelper.save(weightSelected)
         }
     }
 
@@ -109,14 +118,22 @@ class MainViewModel(private val textGenerationHelper: TextGenerationHelper) : Vi
     fun runTraining(inputText: String) {
         trainingJob?.cancel()
         trainingJob = viewModelScope.launch {
+            // TODO: split input text and run infer for each part
             textGenerationHelper.train(inputText)
         }
     }
     fun textChange(inputText: String) {
-        typingJob?.cancel()
-        typingJob = viewModelScope.launch {
-            textGenerationHelper.textChange(inputText)
-        }
+        //typingJob?.cancel()
+        //typingJob = viewModelScope.launch {
+        textGenerationHelper.textChange(inputText)
+        //}
+    }
+
+    fun weightChange(newWeight: String) {
+        //weightChangeJob?.cancel()
+        //weightChangeJob = viewModelScope.launch {
+        textGenerationHelper.weightChange(newWeight)
+        //}
     }
 
     fun setModel(model: TextGenerationHelper.Model) {

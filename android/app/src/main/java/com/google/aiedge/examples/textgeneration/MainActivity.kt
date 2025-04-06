@@ -134,14 +134,18 @@ fun TextGenerationScreen(
                         viewModel.runTraining(it)
                     }
                 },
-                onSubmittedSaveW = { viewModel.runSaveW() },
+                onSubmittedSaveW = { viewModel.runSaveW(it) },
                 onSubmittedRestore = { viewModel.runRestore(it) },
                 memoryUsage = uiState.memoryUsage,
                 tokensPerSecond = uiState.modelInfo.tokensPerSecond,
                 topWords = uiState.modelInfo.topWords,
                 onWordSelected = {
                     viewModel.textChange(it)
-                }
+                },
+                onWeightChange = {
+                     viewModel.weightChange(it)
+                },
+                weightSelected = uiState.weightSelected
             )
 
         }
@@ -212,12 +216,14 @@ fun GenerationBody(
     onSubmittedGenerate: (String) -> Unit,
     onTextChange: (String) -> Unit,
     onSubmittedTrain: (String) -> Unit,
-    onSubmittedSaveW: () -> Unit,
+    onSubmittedSaveW: (String) -> Unit,
     onSubmittedRestore: (String) -> Unit,
     memoryUsage: Pair<Long, Long>,
     tokensPerSecond: Float,
     topWords: List<String>,
     onWordSelected: (String) -> Unit,
+    onWeightChange: (String) -> Unit,
+    weightSelected: String,
 ) {
     val focusManager = LocalFocusManager.current
 
@@ -241,7 +247,8 @@ fun GenerationBody(
         )
         Spacer(modifier = Modifier.height(10.dp))
         RestoreWeightsSelector(
-            onRestoreWeights = onSubmittedRestore
+            onRestoreWeights = onSubmittedRestore,
+            onWeightChange = onWeightChange,
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -266,7 +273,7 @@ fun GenerationBody(
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    onSubmittedSaveW()
+                    onSubmittedSaveW(weightSelected)
                 }) {
                 Text(text = stringResource(id = R.string.save_w))
             }
@@ -274,7 +281,7 @@ fun GenerationBody(
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    onSubmittedRestore("default_lora_weights")
+                    onSubmittedRestore(weightSelected)
                 }) {
                 Text( text = stringResource(id = R.string.restore))
             }
@@ -361,7 +368,8 @@ fun TopKSelector(
 
 @Composable
 fun RestoreWeightsSelector(
-    onRestoreWeights: (filePath: String) -> Unit
+    onRestoreWeights: (filePath: String) -> Unit,
+    onWeightChange: (String) -> Unit
 ) {
     val options = listOf(
         "Fine Tuned 1" to "finetuned1",
@@ -378,6 +386,7 @@ fun RestoreWeightsSelector(
                     .clickable {
                         if (selectedOption != label) {
                             selectedOption = label
+                            onWeightChange(filePath)
                             onRestoreWeights(filePath)
                         }
                     }

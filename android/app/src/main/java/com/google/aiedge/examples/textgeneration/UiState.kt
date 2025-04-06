@@ -32,4 +32,5 @@ data class UiState(
     val modelInfo: ModelInfo = ModelInfo(),
     val textTyped: String = "",
     val memoryUsage: Pair<Long, Long> = Pair(0L, 0L),
+    val weightSelected: String = "",
 )

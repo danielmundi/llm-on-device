@@ -272,7 +272,7 @@ def export_saved_model():
         5. Salva o modelo TFLite gerado em um arquivo binário.
     """
     file_name = f'lora_{args.filename}' if args.apply_lora else args.filename
-    file_name = f'q_{args.filename}' if args.quantization else file_name
+    file_name = f'q_{file_name}' if args.quantization else file_name
 
     model = GPT2Generator(model_name=args.model_name, lr=args.learning_rate, apply_lora=args.apply_lora)
     # Define as assinaturas das funções de treinamento, inferência e obtenção de pesos
@@ -306,9 +306,9 @@ def export_saved_model():
     #converter.experimental_enable_resource_variables = True
     if args.quantization:
         converter.optimizations = [tf.lite.Optimize.DEFAULT] ## Aparetemente operadores com input e output do tipo flooat, não são suportados por INT8, causando erro.
-        converter.target_spec.supported_types = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        # converter.inference_input_type = tf.uint8
-        # converter.inference_output_type = tf.uint8
+        #converter.target_spec.supported_types = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+        #converter.inference_input_type = tf.uint8
+        #converter.inference_output_type = tf.uint8
 
     tflite_model = converter.convert()
     with open(file_name, "wb") as f:
