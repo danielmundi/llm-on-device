@@ -1,3 +1,8 @@
+# Integrantes
+Daniel Spiewak Rempel Finimundi
+
+Luis Felipe Brentegani
+
 # Exportação de Modelo GPT-2 para TFLite com Suporte a LoRA e Quantização
 
 Este repositório contém um código para exportar um modelo GPT-2 treinado (ou adaptado) para o formato TFLite, com suporte para **LoRA (Low-Rank Adaptation)** e **quantização** opcional. A exportação para TFLite permite que o modelo seja executado de maneira eficiente em dispositivos móveis e embarcados, com redução de tamanho e melhoria no desempenho.
