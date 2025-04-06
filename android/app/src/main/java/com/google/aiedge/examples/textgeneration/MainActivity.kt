@@ -281,7 +281,7 @@ fun GenerationBody(
             Button(
                 onClick = {
                     focusManager.clearFocus()
-                    onSubmittedRestore(weightSelected)
+                    onSubmittedRestore("default_lora_weights")
                 }) {
                 Text( text = stringResource(id = R.string.restore))
             }
