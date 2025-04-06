@@ -228,11 +228,6 @@ class TextGenerationHelper(private val context: Context) {
         return bestToken
     }
 
-//    private fun mock(text: String): Triple<Array<IntArray>, Array<IntArray>, Array<IntArray>> {
-//        val tokens = tokenizer?.encode(text)?: throw IllegalStateException("Tokenização falhou.")
-//        return nextWordGenerate(tokens)
-//    }
-
     suspend fun train(inputText: String) {
         return withContext(Dispatchers.IO) {
             var peakUsageBytes = 0L
@@ -263,44 +258,6 @@ class TextGenerationHelper(private val context: Context) {
             _memoryUsage.tryEmit(Pair(peakUsageMb, _totalMemGb))
         }
     }
-
-//    fun nextWordGenerate(vetor: MutableList<Int>, size: Int = 8): Triple<Array<IntArray>, Array<IntArray>, Array<IntArray>> {
-//        val samples = mutableListOf<IntArray>()
-//        val nextWords = mutableListOf<IntArray>()
-//        val lastTokens = if (vetor.size < size) vetor else vetor.takeLast(size)
-//        for (i in 1 until lastTokens.size) {
-//            val input = MutableList<Int>(size) { 0 }
-//            val label = MutableList<Int>(size) { 0 }
-//            for (j in 0 until size) {
-//                if (j >= i) { break; }
-//                input[i-j-1] = lastTokens[i-j-1]
-//                label[i-j-1] = lastTokens[i-j-1]
-//                label[i-j] = lastTokens[i-j]
-//            }
-//            nextWords.add(label.toIntArray())
-//            samples.add(input.toIntArray())
-//        }
-//
-//        val mask = List<IntArray>(lastTokens.size-1) {
-//            List<Int>(size) { 0 }.toIntArray()
-//        }
-//
-//        for (i in 0 until samples.size) {
-//            for (j in 0 until  samples[i].size) {
-//                if (samples[i][j] != 0) {
-//                    mask[i][j] = 1;
-//                }
-//            }
-//        }
-//
-//        return Triple(samples.toTypedArray(), mask.toTypedArray(), nextWords.toTypedArray())
-//    }
-
-    /*
-    "my name is|Daniel#my name is|Daniel#my name is|Daniel#my name is|Daniel"
-    "my name is|Daniel".split("|").join(" ")
-    my name is Daniel
-     */
 
     private fun prepareInputLabel(inputSample: String, labelSample: String, size: Int = 8): Triple<Array<IntArray>, Array<IntArray>, Array<IntArray>> {
         Log.i(TAG, "inputSample = $inputSample")
@@ -344,9 +301,9 @@ class TextGenerationHelper(private val context: Context) {
         }
         for (i in 0 until samplesTrain.size) {
             for (j in 0 until  samplesTrain[i].size) {
-                Log.i(TAG, "Process maskTran[$i][$j]")
+                //Log.i(TAG, "Process maskTran[$i][$j]")
                 if (samplesTrain[i][j] != 0) {
-                    Log.i(TAG, "Set maskTran[$i][$j] = 1")
+                    //Log.i(TAG, "Set maskTran[$i][$j] = 1")
                     maskTrain[i][j] = 1;
                 }
             }
@@ -379,10 +336,13 @@ class TextGenerationHelper(private val context: Context) {
         var maskM = mutableListOf<IntArray>()
         var labelsM = mutableListOf<IntArray>()
 
+        // Split each sample for the training with "#"
         val inputSamples = inputText.split("#").toTypedArray()
         for (sample in inputSamples) {
+            // Split input and label with "|"
             val (inputSample, labelSample) = sample.split("|", limit=2)
             val (inputs_sample, mask_sample, labels_sample) = prepareInputLabel(inputSample, labelSample)
+            // All samples are joined to be trained together
             inputsM.addAll(inputs_sample)
             maskM.addAll(mask_sample)
             labelsM.addAll(labels_sample)
@@ -391,10 +351,6 @@ class TextGenerationHelper(private val context: Context) {
         var inputs = inputsM.toTypedArray()
         var mask = maskM.toTypedArray()
         var labels = labelsM.toTypedArray()
-
-        // Gera dados simulados (mock) a partir do texto de entrada.
-        // 'inputs', 'mask' e 'labels' são extraídos do mock.
-        //val (inputs, mask, labels) = mock(inputText)
 
         // Obtém a forma (shape) da saída do tensor (output) do modelo para o índice 0.
         val outputShape = localInterpreter.getOutputTensor(0).shape()
@@ -412,7 +368,7 @@ class TextGenerationHelper(private val context: Context) {
         // Marca o início do tempo para medir a duração total do treinamento.
         val startTime = SystemClock.uptimeMillis()
 
-        // Executa o treinamento por 10 épocas
+        // Executa o treinamento por 40 épocas
         for (epoch in 0..40) {
             Log.i(TAG, "Train epoch = " + epoch)
             // Cria o mapa de entradas a ser alimentado ao modelo.
@@ -434,10 +390,11 @@ class TextGenerationHelper(private val context: Context) {
             // Rewind novamente o buffer para leitura.
             outputBuffer.rewind()
             updateModelMetric("loss", current_loss)
-            if (epoch > 30 && current_loss < 1.2) {
+            Log.i(TAG, "loss = $current_loss")
+            if (epoch > 30 && current_loss < 1) {
                 break
             }
-            // Faz uma pausa de 1 segundo entre as épocas para previnir sobrecarga no dispositivo
+            // Faz uma pausa de 0.5 segundo entre as épocas para previnir sobrecarga no dispositivo
             sleep(500)
         }
         Log.i(TAG, "Train done")
@@ -554,3 +511,6 @@ class TextGenerationHelper(private val context: Context) {
         LoraModel("lora_model.tflite"),
     }
 }
+
+// Training example:
+//my name is| Daniel#I like| AI#my friend is called| Luis#we like to| do useful projects
